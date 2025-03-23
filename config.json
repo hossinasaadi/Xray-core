@@ -1,0 +1,196 @@
+{
+  "dns": {
+    "hosts": {
+      "domain:googleapis.cn": "googleapis.com",
+      "dns.alidns.com": [
+        "223.5.5.5",
+        "223.6.6.6",
+        "2400:3200::1",
+        "2400:3200:baba::1"
+      ],
+      "one.one.one.one": [
+        "1.1.1.1",
+        "1.0.0.1",
+        "2606:4700:4700::1111",
+        "2606:4700:4700::1001"
+      ],
+      "dot.pub": [
+        "1.12.12.12",
+        "120.53.53.53"
+      ],
+      "dns.google": [
+        "8.8.8.8",
+        "8.8.4.4",
+        "2001:4860:4860::8888",
+        "2001:4860:4860::8844"
+      ],
+      "dns.quad9.net": [
+        "9.9.9.9",
+        "149.112.112.112",
+        "2620:fe::fe",
+        "2620:fe::9"
+      ],
+      "common.dot.dns.yandex.net": [
+        "77.88.8.8",
+        "77.88.8.1",
+        "2a02:6b8::feed:0ff",
+        "2a02:6b8:0:1::feed:0ff"
+      ]
+    },
+    "servers": [
+      "1.1.1.1"
+    ]
+  },
+
+    "log": {
+      "loglevel": "warning"
+    },
+    "inbounds": [
+      {
+        "listen": "127.0.0.1",
+        "port": 444,
+        "protocol": "trojan",
+        "settings": {
+          "clients": [
+            {
+              "email": "8d5qg7j9",
+              "flow": "",
+              "password": "5YauIFGqU5"
+            }
+          ],
+          "fallbacks": []
+        },
+        "sniffing": {
+          "destOverride": [
+            "http",
+            "tls",
+            "quic",
+            "fakedns"
+          ],
+          "enabled": true,
+          "metadataOnly": false,
+          "routeOnly": false
+        },
+        "streamSettings": {
+          "network": "grpc",
+          "security": "none",
+          "tcpSettings": {
+            "acceptProxyProtocol": false,
+            "header": {
+              "type": "none"
+            }
+          }
+        },
+        "tag": "inbound-444"
+      },  
+      {
+        "listen": "127.0.0.1",
+        "settings": {
+
+          "auth": "noauth",
+          "userLevel": 8,
+          "udp": true
+        },
+        "tag": "directSocks",
+        "protocol": "socks",
+        "port": 10802,
+        "sniffing": {
+          "enabled": true,
+          "destOverride": [
+            "http",
+            "tls",
+            "quic",
+            "fakedns"
+          ],
+          "metadataOnly": false,
+          "routeOnly": false
+
+        }
+  
+      },
+      {
+        "tag": "api",
+        "port": 62788,
+        "listen": "127.0.0.1",
+        "protocol": "dokodemo-door",
+        "settings": {
+          "address": "127.0.0.1"
+        }
+      },
+      {
+        "tag": "inDns",
+        "port": 62791,
+        "listen": "127.0.0.1",
+        "protocol": "dokodemo-door",
+        "settings": {
+          "port": 53,
+          "network": "tcp,udp",
+          "timeout": 10,
+          "address": "8.8.8.8",
+          "userLevel": 0
+        }
+      }
+    ],
+    "outbounds": [
+      {
+        "tag": "direct",
+        "protocol": "freedom",
+        "settings": {}
+      },
+      {
+        "tag": "blocked",
+        "protocol": "blackhole",
+        "settings": {}
+      }
+  
+    ],
+    "api": {
+      "services": [
+        "HandlerService", "LoggerService", "StatsService","RoutingService"
+      ],
+      "tag": "api"
+    },
+
+    "stats": {},
+    "routing": {
+      "rules": [
+        {
+          "type": "field",
+          "domain": ["keyword:torrent"],
+          "outboundTag": "blocked"
+        },
+        {
+          "type": "field",
+          "protocol": ["bittorrent"],
+          "outboundTag": "blocked"
+        }
+  ,  
+        {
+          "ruleTag" : "ip-ban1",
+          "outboundTag": "api",
+          "type": "field",
+          "inboundTag": [
+            "api"
+          ]
+        },
+        {
+          "outboundTag": "outDns",
+          "type": "field",
+          "inboundTag": [
+            "inDns"
+          ]
+        },
+        {
+          "outboundTag": "proxy",
+          "type": "field",
+          "balancerTag": "b1",
+  
+          "inboundTag": [
+            "dnsQuery"
+          ]
+        }
+      ],
+      "domainStrategy": "AsIs"
+    },
+    "transport": {}
+  }
