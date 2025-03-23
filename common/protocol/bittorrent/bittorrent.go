@@ -1,10 +1,14 @@
 package bittorrent
 
 import (
+	"context"
 	"encoding/binary"
-	"errors"
+
 	"math"
+	"strings"
 	"time"
+
+	"github.com/xtls/xray-core/common/errors"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
@@ -22,15 +26,25 @@ func (h *SniffHeader) Domain() string {
 
 var errNotBittorrent = errors.New("not bittorrent header")
 
-func SniffBittorrent(b []byte) (*SniffHeader, error) {
+func SniffBittorrent(b []byte, ctx context.Context) (*SniffHeader, error) {
 	if len(b) < 20 {
 		return nil, common.ErrNoClue
 	}
 
-	if b[0] == 19 && string(b[1:20]) == "BitTorrent protocol" {
+	if strings.Contains(strings.ToLower(string(b)), "torrent") {
+		// println("SniffBittorrent OK")
+		errors.LogError(ctx, "SniffBittorrent OK")
+
 		return &SniffHeader{}, nil
 	}
+	// Ethernet header is 14 bytes, IP header is 20 bytes (assuming no options)
+	// tcpHeaderStart := 14 + 20 // Offset to TCP header
 
+	// if len(b) > tcpHeaderStart+1 {
+	// 	// Extract Source Port (first 2 bytes of TCP header)
+	// 	sourcePort := uint16(b[tcpHeaderStart])<<8 | uint16(b[tcpHeaderStart+1])
+	// 	println("bittorrent port", sourcePort)
+	// }
 	return nil, errNotBittorrent
 }
 

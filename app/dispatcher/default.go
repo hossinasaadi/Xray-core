@@ -2,7 +2,6 @@ package dispatcher
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -297,6 +296,8 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 					ob.Target = destination
 				}
 			}
+			// ob.Name = "blocked"
+
 			d.routedDispatch(ctx, outbound, destination)
 		}()
 	}
@@ -383,17 +384,33 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 
 				cReader.Cache(payload)
 				if !payload.IsEmpty() {
-					packet := gopacket.NewPacket(payload.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
+					bs := payload.Bytes()
+					// go func() {
+
+					packet := gopacket.NewPacket(bs, layers.LayerTypeTCP, gopacket.Default)
+
 					if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-						fmt.Println("This is a TCP packet!")
-						// Get actual TCP data from this layer
-						tcp, _ := tcpLayer.(*layers.TCP)
-						errors.LogError(ctx, "From src port %d to dst port %d\n", tcp.SrcPort, tcp.DstPort)
+						// tcp, _ := tcpLayer.(*layers.TCP)
+						for _, layer := range packet.Layers() {
+							if isBitTorrentPacket(layer.LayerPayload()) {
+								errors.LogError(ctx, "BitTorrent TCP Packet detected from")
+
+							}
+						}
 					}
-					// Iterate over all layers, printing out each layer type
-					for _, layer := range packet.Layers() {
-						errors.LogError(ctx, "PACKET LAYER:", layer.LayerType())
+					packet = gopacket.NewPacket(bs, layers.LayerTypeUDP, gopacket.Default)
+
+					if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
+						// _, _ := udpLayer.(*layers.UDP)
+						for _, layer := range packet.Layers() {
+
+							if isBitTorrentPacket(layer.LayerPayload()) {
+								// fmt.Printf("BitTorrent UDP Packet detected from ")
+								errors.LogError(ctx, "BitTorrent UDP Packet detected from")
+							}
+						}
 					}
+					// }()
 
 					result, err := sniffer.Sniff(ctx, payload.Bytes(), network)
 					if err != common.ErrNoClue {
@@ -414,6 +431,16 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 	}
 	return contentResult, contentErr
 }
+
+// Check if payload contains BitTorrent handshake magic string
+func isBitTorrentPacket(payload []byte) bool {
+	// Check for BitTorrent handshake (first byte 0x13, followed by "BitTorrent protocol")
+	if len(payload) > 20 && strings.Contains(strings.ToLower(string(payload)), "torrent") {
+		return true
+	}
+	return false
+}
+
 func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.Link, destination net.Destination) {
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
