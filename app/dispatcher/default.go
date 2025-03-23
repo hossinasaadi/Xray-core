@@ -2,11 +2,14 @@ package dispatcher
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
@@ -380,6 +383,18 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 
 				cReader.Cache(payload)
 				if !payload.IsEmpty() {
+					packet := gopacket.NewPacket(payload.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
+					if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+						fmt.Println("This is a TCP packet!")
+						// Get actual TCP data from this layer
+						tcp, _ := tcpLayer.(*layers.TCP)
+						errors.LogError(ctx, "From src port %d to dst port %d\n", tcp.SrcPort, tcp.DstPort)
+					}
+					// Iterate over all layers, printing out each layer type
+					for _, layer := range packet.Layers() {
+						errors.LogError(ctx, "PACKET LAYER:", layer.LayerType())
+					}
+
 					result, err := sniffer.Sniff(ctx, payload.Bytes(), network)
 					if err != common.ErrNoClue {
 						return result, err
