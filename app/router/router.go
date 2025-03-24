@@ -6,7 +6,7 @@ import (
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
-	"github.com/xtls/xray-core/common/serial"
+	serial "github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
 	"github.com/xtls/xray-core/features/outbound"
@@ -134,9 +134,10 @@ func (r *Router) ReloadRules(config *Config, shouldAppend bool) error {
 			return err
 		}
 		rr := &Rule{
-			Condition: cond,
-			Tag:       rule.GetTag(),
-			RuleTag:   rule.GetRuleTag(),
+			Condition:   cond,
+			Tag:         rule.GetTag(),
+			RuleTag:     rule.GetRuleTag(),
+			RoutingRule: rule,
 		}
 		btag := rule.GetBalancingTag()
 		if len(btag) > 0 {
@@ -181,6 +182,44 @@ func (r *Router) RemoveRule(tag string) error {
 	return errors.New("empty tag name!")
 
 }
+
+// AddRule implements routing.Router.
+func (r *Router) RestrictionRule(ip []byte) error {
+	c := &Config{}
+	ips := []*GeoIP{}
+	cidr := []*CIDR{}
+	cidr = append(cidr, &CIDR{Ip: ip})
+	routingRule := &RoutingRule{}
+	if r.RuleExists("restrict_bittorrent_source") {
+		for _, rule := range r.rules {
+			if rule.RuleTag == "restrict_bittorrent_source" {
+				rule.RoutingRule.SourceGeoip = append(rule.RoutingRule.SourceGeoip, &GeoIP{Cidr: cidr})
+				routingRule = rule.RoutingRule
+			}
+		}
+
+	} else {
+		ips = append(ips, &GeoIP{Cidr: cidr})
+
+		routingRule = &RoutingRule{
+			RuleTag:     "restrict_bittorrent_source",
+			TargetTag:   &RoutingRule_Tag{Tag: "blocked"},
+			SourceGeoip: ips,
+		}
+	}
+	c.Rule = append(c.Rule, routingRule)
+	errors.LogError(r.ctx, "RestrictionRule -> ", c)
+
+	// config := conf.Config{}
+	// config.RouterConfig = &conf.RouterConfig{}
+	// config.RouterConfig.RuleList = append(config.RouterConfig.RuleList, json.RawMessage(stringConfig))
+	// mainConfig, err := config.Build()
+	// if err != nil {
+	// }
+
+	return r.ReloadRules(c, true)
+}
+
 func (r *Router) pickRouteInternal(ctx routing.Context) (*Rule, routing.Context, error) {
 	// SkipDNSResolve is set from DNS module.
 	// the DOH remote server maybe a domain name,
