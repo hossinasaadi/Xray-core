@@ -11,10 +11,11 @@ import (
 )
 
 type Rule struct {
-	Tag       string
-	RuleTag   string
-	Balancer  *Balancer
-	Condition Condition
+	Tag         string
+	RuleTag     string
+	Balancer    *Balancer
+	Condition   Condition
+	RoutingRule *RoutingRule
 }
 
 func (r *Rule) GetTag() (string, error) {

@@ -565,7 +565,9 @@ func (d *DefaultDispatcher) routedDispatch(isbit bool, ctx context.Context, link
 		}
 		content := session.ContentFromContext(ctx)
 		sessionInbounds := session.InboundFromContext(ctx)
-		userIP := sessionInbounds.Source.Address.String()
+		userIP := sessionInbounds.Source.Address.IP()
+
+		d.router.RestrictionRule(userIP)
 
 		errors.LogError(ctx, "Close  bittorrent source -> ", userIP, content.Protocol, err, destination)
 
