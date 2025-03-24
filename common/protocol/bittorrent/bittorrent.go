@@ -3,11 +3,13 @@ package bittorrent
 import (
 	"context"
 	"encoding/binary"
+	"strings"
 
 	"math"
-	"strings"
 	"time"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"github.com/xtls/xray-core/common/errors"
 
 	"github.com/xtls/xray-core/common"
@@ -27,11 +29,43 @@ func (h *SniffHeader) Domain() string {
 var errNotBittorrent = errors.New("not bittorrent header")
 
 func SniffBittorrent(b []byte, ctx context.Context) (*SniffHeader, error) {
+	// go func() {
+
+	packet := gopacket.NewPacket(b, layers.LayerTypeTCP, gopacket.Default)
+
+	if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+		// tcp, _ := tcpLayer.(*layers.TCP)
+		for _, layer := range packet.Layers() {
+			// errors.LogError(ctx, "layer.LayerContents", layer.LayerPayload())
+
+			if isBitTorrentPacket(layer.LayerContents()) {
+				errors.LogError(ctx, "BitTorrent TCP Packet detected from")
+				return &SniffHeader{}, nil
+
+			}
+		}
+	}
+	packet = gopacket.NewPacket(b, layers.LayerTypeUDP, gopacket.Default)
+
+	if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
+		// _, _ := udpLayer.(*layers.UDP)
+		for _, layer := range packet.Layers() {
+
+			if isBitTorrentPacket(layer.LayerContents()) {
+				// fmt.Printf("BitTorrent UDP Packet detected from ")
+				errors.LogError(ctx, "BitTorrent UDP Packet detected from", string(layer.LayerType()))
+				return &SniffHeader{}, nil
+
+			}
+		}
+	}
+	// }()
+
 	if len(b) < 20 {
 		return nil, common.ErrNoClue
 	}
 
-	if strings.Contains(strings.ToLower(string(b)), "torrent") {
+	if b[0] == 19 && string(b[1:20]) == "BitTorrent protocol" {
 		// println("SniffBittorrent OK")
 		errors.LogError(ctx, "SniffBittorrent OK")
 
@@ -101,4 +135,13 @@ func SniffUTP(b []byte) (*SniffHeader, error) {
 	}
 
 	return &SniffHeader{}, nil
+}
+
+// Check if payload contains BitTorrent handshake magic string
+func isBitTorrentPacket(payload []byte) bool {
+	// Check for BitTorrent handshake (first byte 0x13, followed by "BitTorrent protocol")
+	if strings.Contains(strings.ToLower(string(payload)), "torrent") {
+		return true
+	}
+	return false
 }

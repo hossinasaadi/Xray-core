@@ -7,8 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
@@ -202,6 +200,11 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 
 func (d *DefaultDispatcher) shouldOverride(ctx context.Context, result SniffResult, request session.SniffingRequest, destination net.Destination) bool {
 	domain := result.Domain()
+	if result.Protocol() == "bittorrent" {
+		println(result.Protocol() + "5")
+		return true
+	}
+
 	if domain == "" {
 		return false
 	}
@@ -267,7 +270,7 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 	sniffingRequest := content.SniffingRequest
 	inbound, outbound := d.getLink(ctx)
 	if !sniffingRequest.Enabled {
-		go d.routedDispatch(ctx, outbound, destination)
+		go d.routedDispatch(false, ctx, outbound, destination)
 	} else {
 		go func() {
 			cReader := &cachedReader{
@@ -275,6 +278,12 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 			}
 			outbound.Reader = cReader
 			result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
+			isBit := false
+			if result != nil {
+				if result.Protocol() == "bittorrent" {
+					isBit = true
+				}
+			}
 			if err == nil {
 				content.Protocol = result.Protocol()
 			}
@@ -286,6 +295,7 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 				if resComp, ok := result.(SnifferResultComposite); ok {
 					protocol = resComp.ProtocolForDomainResult()
 				}
+				println(protocol, result.Domain(), result.Protocol())
 				isFakeIP := false
 				if fkr0, ok := d.fdns.(dns.FakeDNSEngineRev0); ok && fkr0.IsIPInIPPool(ob.Target.Address) {
 					isFakeIP = true
@@ -296,9 +306,8 @@ func (d *DefaultDispatcher) Dispatch(ctx context.Context, destination net.Destin
 					ob.Target = destination
 				}
 			}
-			// ob.Name = "blocked"
 
-			d.routedDispatch(ctx, outbound, destination)
+			d.routedDispatch(isBit, ctx, outbound, destination)
 		}()
 	}
 	return inbound, nil
@@ -324,13 +333,20 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 	}
 	sniffingRequest := content.SniffingRequest
 	if !sniffingRequest.Enabled {
-		d.routedDispatch(ctx, outbound, destination)
+		d.routedDispatch(false, ctx, outbound, destination)
 	} else {
 		cReader := &cachedReader{
 			reader: outbound.Reader.(*pipe.Reader),
 		}
 		outbound.Reader = cReader
 		result, err := sniffer(ctx, cReader, sniffingRequest.MetadataOnly, destination.Network)
+		isBit := false
+		if result != nil {
+			if result.Protocol() == "bittorrent" {
+				isBit = true
+			}
+		}
+
 		if err == nil {
 			content.Protocol = result.Protocol()
 		}
@@ -352,7 +368,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 				ob.Target = destination
 			}
 		}
-		d.routedDispatch(ctx, outbound, destination)
+		d.routedDispatch(isBit, ctx, outbound, destination)
 	}
 
 	return nil
@@ -384,33 +400,6 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 
 				cReader.Cache(payload)
 				if !payload.IsEmpty() {
-					bs := payload.Bytes()
-					// go func() {
-
-					packet := gopacket.NewPacket(bs, layers.LayerTypeTCP, gopacket.Default)
-
-					if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-						// tcp, _ := tcpLayer.(*layers.TCP)
-						for _, layer := range packet.Layers() {
-							if isBitTorrentPacket(layer.LayerPayload()) {
-								errors.LogError(ctx, "BitTorrent TCP Packet detected from")
-
-							}
-						}
-					}
-					packet = gopacket.NewPacket(bs, layers.LayerTypeUDP, gopacket.Default)
-
-					if udpLayer := packet.Layer(layers.LayerTypeUDP); udpLayer != nil {
-						// _, _ := udpLayer.(*layers.UDP)
-						for _, layer := range packet.Layers() {
-
-							if isBitTorrentPacket(layer.LayerPayload()) {
-								// fmt.Printf("BitTorrent UDP Packet detected from ")
-								errors.LogError(ctx, "BitTorrent UDP Packet detected from")
-							}
-						}
-					}
-					// }()
 
 					result, err := sniffer.Sniff(ctx, payload.Bytes(), network)
 					if err != common.ErrNoClue {
@@ -432,16 +421,74 @@ func sniffer(ctx context.Context, cReader *cachedReader, metadataOnly bool, netw
 	return contentResult, contentErr
 }
 
-// Check if payload contains BitTorrent handshake magic string
-func isBitTorrentPacket(payload []byte) bool {
-	// Check for BitTorrent handshake (first byte 0x13, followed by "BitTorrent protocol")
-	if len(payload) > 20 && strings.Contains(strings.ToLower(string(payload)), "torrent") {
-		return true
-	}
-	return false
-}
+func (d *DefaultDispatcher) routedDispatch(isbit bool, ctx context.Context, link *transport.Link, destination net.Destination) {
+	// ips, err := net.LookupIP(destination.Address.String())
+	// if err == nil {
+	// conn, err := grpc.Dial(fmt.Sprintf("[::1]:%v", 59613), grpc.WithInsecure())
+	// if err != nil {
+	// 	return
+	// }
+	// defer conn.Close()
 
-func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.Link, destination net.Destination) {
+	// errors.LogError(ctx, "Dispatch ", destination)
+	// errors.LogError(ctx, "Dispatch2 ", ips, destination.Port.String())
+	// client := routerService.NewRoutingServiceClient(conn)
+	// jsonInbound, err := json.Marshal([]string{})
+	// if err != nil {
+	// 	fmt.Println("Error marshaling JSON:", err)
+	// 	return
+	// }
+	// jsonIps, err := json.Marshal(ips)
+	// if err != nil {
+	// 	fmt.Println("Error marshaling JSON:", err)
+	// 	return
+	// }
+
+	// stringConfig := fmt.Sprintf(`
+	// {
+	// 	"routing": {
+	// 		"rules": [
+	// 		  {
+	// 			"ruleTag" : "%s",
+	// 			"inboundTag": %s,
+	// 			"outboundTag": "%s",
+	// 			"type": "field",
+	// 			"source": %s
+	// 		  }
+	// 		]
+	// 	  }
+	//   }
+
+	// `, "sib", string(jsonInbound), "blocked", string(jsonIps))
+
+	// conf, err := serial.DecodeJSONConfig(strings.NewReader(stringConfig))
+	// if err != nil {
+	// 	// base.Fatalf("failed to decode : %s", err)
+	// }
+	// rc := *conf.RouterConfig
+
+	// config, err := rc.Build()
+	// if err != nil {
+	// 	// base.Fatalf("failed to build conf: %s", err)
+	// }
+	// tmsg := cserial.ToTypedMessage(config)
+	// if tmsg == nil {
+	// 	// base.Fatalf("failed to format config to TypedMessage.")
+	// }
+
+	// ra := &routerService.AddRuleRequest{
+	// 	Config:       tmsg,
+	// 	ShouldAppend: true,
+	// }
+	// resp, err := client.AddRule(ctx, ra)
+	// if err != nil {
+	// 	// base.Fatalf("failed to perform AddRule: %s", err)
+	// }
+
+	// errors.LogInfo(ctx, "resp", resp)
+
+	// routingLink := routing_session.AsRoutingContext(ctx)
+	// }
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
 	if hosts, ok := d.dns.(dns.HostsLookup); ok && destination.Address.Family().IsDomain() {
@@ -505,6 +552,28 @@ func (d *DefaultDispatcher) routedDispatch(ctx context.Context, link *transport.
 	}
 
 	ob.Tag = handler.Tag()
+
+	if isbit {
+		handler = d.ohm.GetHandler("blocked")
+		ob.Tag = handler.Tag()
+
+		ips, err := net.LookupIP(destination.Address.String())
+		if err == nil {
+			errors.LogError(ctx, "Dispatch ", destination)
+			errors.LogError(ctx, "Dispatch2 ", ips, destination.Port.String())
+
+		}
+		content := session.ContentFromContext(ctx)
+		sessionInbounds := session.InboundFromContext(ctx)
+		userIP := sessionInbounds.Source.Address.String()
+
+		errors.LogError(ctx, "Close  bittorrent source -> ", userIP, content.Protocol, err, destination)
+
+		// common.Close(link.Writer)
+		// common.Interrupt(link.Reader)
+		// return
+	}
+
 	if accessMessage := log.AccessMessageFromContext(ctx); accessMessage != nil {
 		if tag := handler.Tag(); tag != "" {
 			if inTag == "" {
