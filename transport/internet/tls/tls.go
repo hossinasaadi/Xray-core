@@ -192,6 +192,9 @@ var PresetFingerprints = map[string]*utls.ClientHelloID{
 	"randomized":       nil,
 	"randomizednoalpn": nil,
 	"unsafe":           nil,
+
+	// temporary
+	"chromeNormal": &utls.HelloChrome_120,
 }
 
 var ModernFingerprints = map[string]*utls.ClientHelloID{
