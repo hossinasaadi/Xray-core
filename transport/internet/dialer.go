@@ -85,16 +85,26 @@ var (
 	obm       outbound.Manager
 )
 
-func lookupIP(domain string, strategy DomainStrategy, localAddr net.Address) ([]net.IP, error) {
+func lookupIP(ctx context.Context, dest net.Destination, localAddr net.Address, sockopt *SocketConfig) ([]net.IP, error) {
 	if dnsClient == nil {
 		return nil, errors.New("DNS client not initialized").AtError()
 	}
-
+	domain := dest.Address.String()
+	strategy := sockopt.DomainStrategy
 	ips, _, err := dnsClient.LookupIP(domain, dns.IPOption{
 		IPv4Enable: (localAddr == nil || localAddr.Family().IsIPv4()) && strategy.preferIP4(),
 		IPv6Enable: (localAddr == nil || localAddr.Family().IsIPv6()) && strategy.preferIP6(),
 	})
 	{ // Resolve fallback
+
+		// check if resovled ips is reachable
+		if len(ips) != 0 && strategy.hasFallback() && localAddr == nil {
+			if !isAnyReachableIP(ctx, ips, dest.Port, sockopt) {
+				errors.LogInfo(ctx, "resolve fallback: ips unreachable")
+
+				ips = []net.IP{}
+			}
+		}
 		if (len(ips) == 0 || err != nil) && strategy.hasFallback() && localAddr == nil {
 			ips, _, err = dnsClient.LookupIP(domain, dns.IPOption{
 				IPv4Enable: strategy.fallbackIP4(),
@@ -114,6 +124,23 @@ func canLookupIP(dst net.Destination, sockopt *SocketConfig) bool {
 		return false
 	}
 	return sockopt.DomainStrategy.hasStrategy()
+}
+
+func isAnyReachableIP(ctx context.Context, ips []net.IP, port net.Port, sockopt *SocketConfig) bool {
+	for _, ip := range ips {
+		dest := net.Destination{
+			Address: net.IPAddress(ip),
+			Network: net.Network_TCP,
+			Port:    port,
+		}
+
+		conn, err := effectiveSystemDialer.Dial(ctx, nil, dest, sockopt)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+	}
+	return false
 }
 
 func redirect(ctx context.Context, dst net.Destination, obt string, h outbound.Handler) net.Conn {
@@ -249,7 +276,7 @@ func DialSystem(ctx context.Context, dest net.Destination, sockopt *SocketConfig
 	}
 
 	if canLookupIP(dest, sockopt) {
-		ips, err := lookupIP(dest.Address.String(), sockopt.DomainStrategy, src)
+		ips, err := lookupIP(ctx, dest, src, sockopt)
 		if err != nil {
 			errors.LogErrorInner(ctx, err, "failed to resolve ip")
 			if sockopt.DomainStrategy.forceIP() {
