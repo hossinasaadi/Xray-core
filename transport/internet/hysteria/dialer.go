@@ -3,10 +3,10 @@ package hysteria
 import (
 	"context"
 	go_tls "crypto/tls"
-	"fmt"
 	"math/rand"
 	"net/http"
 	"net/url"
+	reflect "reflect"
 	"runtime"
 	"strconv"
 	"sync"
@@ -15,6 +15,7 @@ import (
 	"github.com/apernet/quic-go"
 	"github.com/apernet/quic-go/http3"
 	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/net/cnc"
@@ -26,6 +27,33 @@ import (
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
 )
+
+type HysteriaPacketConn struct {
+	net.PacketConn
+	target net.Addr
+}
+
+func (c *HysteriaPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	n, _, err := c.PacketConn.ReadFrom(p)
+	return n, c.target, err
+}
+
+func (c *HysteriaPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	if fake, ok := c.PacketConn.(*internet.FakePacketConn); ok {
+		if cncConn, ok := fake.Conn.(*cnc.Connection); ok {
+			b := buf.New()
+			b.Write(p)
+			dest := net.DestinationFromAddr(addr)
+			b.UDP = &dest
+			err := cncConn.WriteMultiBuffer(buf.MultiBuffer{b})
+			if err != nil {
+				return 0, err
+			}
+			return len(p), nil
+		}
+	}
+	return c.PacketConn.WriteTo(p, addr)
+}
 
 type client struct {
 	sync.Mutex
@@ -63,6 +91,20 @@ func (c *client) close() {
 	c.tr = nil
 	c.pktConn = nil
 	c.udpSM = nil
+}
+
+func (c *client) resolveTargetAddr() (*net.UDPAddr, error) {
+	var ip net.IP
+	if c.dest.Address.Family().IsDomain() {
+		ips, err := net.LookupIP(c.dest.Address.Domain())
+		if err != nil || len(ips) == 0 {
+			return nil, err
+		}
+		ip = ips[rand.Intn(len(ips))]
+	} else {
+		ip = c.dest.Address.IP()
+	}
+	return &net.UDPAddr{IP: ip, Port: int(c.dest.Port)}, nil
 }
 
 func (c *client) dial(ctx context.Context) error {
@@ -123,13 +165,18 @@ func (c *client) dial(ctx context.Context) error {
 
 		var pktConn net.PacketConn
 
-		switch c := conn.(type) {
+		switch netconn := conn.(type) {
 		case *internet.PacketConnWrapper:
-			pktConn = c.PacketConn
+			pktConn = netconn.PacketConn
 		case *cnc.Connection:
-			pktConn = &internet.FakePacketConn{Conn: c}
+			pktConn = &internet.FakePacketConn{Conn: netconn}
 		default:
-			return nil, fmt.Errorf("unsupported connection type: %T", c)
+			panic(reflect.TypeOf(netconn))
+		}
+
+		pktConn = &HysteriaPacketConn{
+			PacketConn: pktConn,
+			target:     addr,
 		}
 
 		return pktConn, nil
@@ -144,15 +191,23 @@ func (c *client) dial(ctx context.Context) error {
 		if err != nil {
 			return errors.New("failed to dial to dest").Base(err)
 		}
-		switch c := conn.(type) {
+		switch netconn := conn.(type) {
 		case *internet.PacketConnWrapper:
-			pktConn = c.PacketConn
-			udpAddr = conn.RemoteAddr().(*net.UDPAddr)
+			pktConn = netconn.PacketConn
+			udpAddr = netconn.RemoteAddr().(*net.UDPAddr)
 		case *cnc.Connection:
-			pktConn = &internet.FakePacketConn{Conn: c}
-			udpAddr = &net.UDPAddr{IP: c.RemoteAddr().(*net.TCPAddr).IP, Port: c.RemoteAddr().(*net.TCPAddr).Port}
+			pktConn = &internet.FakePacketConn{Conn: netconn}
+			resolved, err := c.resolveTargetAddr()
+			if err != nil {
+				return errors.New("failed to resolve target address").Base(err)
+			}
+			udpAddr = resolved
 		default:
-			return fmt.Errorf("unsupported connection type: %T", c)
+			panic(reflect.TypeOf(netconn))
+		}
+		pktConn = &HysteriaPacketConn{
+			PacketConn: pktConn,
+			target:     udpAddr,
 		}
 		pktConn = udphop.NewUDPHopPacketConn(udphop.ToAddrs(udpAddr.IP, quicParams.UdpHop.Ports), time.Duration(quicParams.UdpHop.IntervalMin)*time.Second, time.Duration(quicParams.UdpHop.IntervalMax)*time.Second, udpHopDialer, pktConn, index)
 	} else {
@@ -160,15 +215,23 @@ func (c *client) dial(ctx context.Context) error {
 		if err != nil {
 			return errors.New("failed to dial to dest").Base(err)
 		}
-		switch c := conn.(type) {
+		switch netconn := conn.(type) {
 		case *internet.PacketConnWrapper:
-			pktConn = c.PacketConn
-			udpAddr = c.RemoteAddr().(*net.UDPAddr)
+			pktConn = netconn.PacketConn
+			udpAddr = netconn.RemoteAddr().(*net.UDPAddr)
 		case *cnc.Connection:
-			pktConn = &internet.FakePacketConn{Conn: c}
-			udpAddr = &net.UDPAddr{IP: c.RemoteAddr().(*net.TCPAddr).IP, Port: c.RemoteAddr().(*net.TCPAddr).Port}
+			pktConn = &internet.FakePacketConn{Conn: netconn}
+			resolved, err := c.resolveTargetAddr()
+			if err != nil {
+				return errors.New("failed to resolve target address").Base(err)
+			}
+			udpAddr = resolved
 		default:
-			return fmt.Errorf("unsupported connection type: %T", c)
+			panic(reflect.TypeOf(netconn))
+		}
+		pktConn = &HysteriaPacketConn{
+			PacketConn: pktConn,
+			target:     udpAddr,
 		}
 	}
 
@@ -242,7 +305,7 @@ func (c *client) dial(ctx context.Context) error {
 	case "force-brutal":
 		congestion.UseBrutal(conn, quicParams.BrutalUp)
 	default:
-		return fmt.Errorf("unsupported congestion type: %s", quicParams.Congestion)
+		panic(quicParams.Congestion)
 	}
 
 	c.pktConn = pktConn

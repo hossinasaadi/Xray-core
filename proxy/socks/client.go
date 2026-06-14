@@ -108,7 +108,9 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 		return errors.New("failed to establish connection to server").AtWarning().Base(err)
 	}
 	if udpRequest != nil {
-		if udpRequest.Address == net.AnyIP || udpRequest.Address == net.AnyIPv6 {
+		if udpRequest.Address == net.AnyIP || udpRequest.Address == net.AnyIPv6 ||
+			(udpRequest.Address.Family().IsIP() && udpRequest.Address.IP().IsLoopback() &&
+				(!dest.Address.Family().IsIP() || !dest.Address.IP().IsLoopback())) {
 			udpRequest.Address = dest.Address
 		}
 	}
