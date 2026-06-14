@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
-	reflect "reflect"
+	"reflect"
 	"runtime"
 	"strconv"
 	"sync"
@@ -165,13 +165,13 @@ func (c *client) dial(ctx context.Context) error {
 
 		var pktConn net.PacketConn
 
-		switch netconn := conn.(type) {
+		switch c := conn.(type) {
 		case *internet.PacketConnWrapper:
-			pktConn = netconn.PacketConn
+			pktConn = c.PacketConn
 		case *cnc.Connection:
-			pktConn = &internet.FakePacketConn{Conn: netconn}
+			pktConn = &internet.FakePacketConn{Conn: c}
 		default:
-			panic(reflect.TypeOf(netconn))
+			panic(reflect.TypeOf(c))
 		}
 
 		pktConn = &HysteriaPacketConn{
@@ -191,19 +191,19 @@ func (c *client) dial(ctx context.Context) error {
 		if err != nil {
 			return errors.New("failed to dial to dest").Base(err)
 		}
-		switch netconn := conn.(type) {
+		resolved, err := c.resolveTargetAddr()
+		if err != nil {
+			return errors.New("failed to resolve target address").Base(err)
+		}
+		switch c := conn.(type) {
 		case *internet.PacketConnWrapper:
-			pktConn = netconn.PacketConn
-			udpAddr = netconn.RemoteAddr().(*net.UDPAddr)
+			pktConn = c.PacketConn
+			udpAddr = c.RemoteAddr().(*net.UDPAddr)
 		case *cnc.Connection:
-			pktConn = &internet.FakePacketConn{Conn: netconn}
-			resolved, err := c.resolveTargetAddr()
-			if err != nil {
-				return errors.New("failed to resolve target address").Base(err)
-			}
+			pktConn = &internet.FakePacketConn{Conn: c}
 			udpAddr = resolved
 		default:
-			panic(reflect.TypeOf(netconn))
+			panic(reflect.TypeOf(c))
 		}
 		pktConn = &HysteriaPacketConn{
 			PacketConn: pktConn,
@@ -215,19 +215,19 @@ func (c *client) dial(ctx context.Context) error {
 		if err != nil {
 			return errors.New("failed to dial to dest").Base(err)
 		}
-		switch netconn := conn.(type) {
+		resolved, err := c.resolveTargetAddr()
+		if err != nil {
+			return errors.New("failed to resolve target address").Base(err)
+		}
+		switch c := conn.(type) {
 		case *internet.PacketConnWrapper:
-			pktConn = netconn.PacketConn
-			udpAddr = netconn.RemoteAddr().(*net.UDPAddr)
+			pktConn = c.PacketConn
+			udpAddr = c.RemoteAddr().(*net.UDPAddr)
 		case *cnc.Connection:
-			pktConn = &internet.FakePacketConn{Conn: netconn}
-			resolved, err := c.resolveTargetAddr()
-			if err != nil {
-				return errors.New("failed to resolve target address").Base(err)
-			}
+			pktConn = &internet.FakePacketConn{Conn: c}
 			udpAddr = resolved
 		default:
-			panic(reflect.TypeOf(netconn))
+			panic(reflect.TypeOf(c))
 		}
 		pktConn = &HysteriaPacketConn{
 			PacketConn: pktConn,
