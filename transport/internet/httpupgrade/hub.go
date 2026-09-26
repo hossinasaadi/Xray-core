@@ -81,6 +81,13 @@ func (s *server) upgrade(conn net.Conn) (stat.Connection, error) {
 	}
 	resp.Header.Set("Connection", "Upgrade")
 	resp.Header.Set("Upgrade", "websocket")
+
+	// complete the RFC 6455 handshake when a nonce is provided.
+	// Keep the old behavior for older clients and preserve the exact header casing.
+	if secKey := req.Header.Get("Sec-WebSocket-Key"); secKey != "" {
+		resp.Header["Sec-WebSocket-Accept"] = []string{secWebSocketAccept(secKey)}
+	}
+
 	err = resp.Write(conn)
 	if err != nil {
 		return nil, err

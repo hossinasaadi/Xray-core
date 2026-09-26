@@ -18,8 +18,9 @@ import (
 
 type ConnRF struct {
 	net.Conn
-	Req   *http.Request
-	First bool
+	Req    *http.Request
+	First  bool
+	Accept string
 }
 
 func (c *ConnRF) Read(b []byte) (int, error) {
@@ -36,6 +37,11 @@ func (c *ConnRF) Read(b []byte) (int, error) {
 			strings.ToLower(resp.Header.Get("Upgrade")) != "websocket" ||
 			strings.ToLower(resp.Header.Get("Connection")) != "upgrade" {
 			return 0, errors.New("unrecognized reply")
+		}
+
+		// verify Sec-WebSocket-Accept only when the peer sent one
+		if got := headerValue(resp.Header, "Sec-WebSocket-Accept"); got != "" && c.Accept != "" && got != c.Accept {
+			return 0, errors.New("bad Sec-WebSocket-Accept")
 		}
 		// drain remaining bufreader
 		return reader.Read(b[:reader.Buffered()])
@@ -97,15 +103,30 @@ func dialhttpUpgrade(ctx context.Context, dest net.Destination, streamSettings *
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 
+	// send a valid RFC 6455 handshake so intermediaries like cloudflare
+	// accept the upgrade. after that, the transport still uses raw bytes.
+	secKey := headerValue(req.Header, "Sec-WebSocket-Key")
+	if secKey == "" {
+		secKey, err = newSecWebSocketKey()
+		if err != nil {
+			return nil, errors.New("failed to generate Sec-WebSocket-Key").Base(err)
+		}
+		req.Header["Sec-WebSocket-Key"] = []string{secKey}
+	}
+	if headerValue(req.Header, "Sec-WebSocket-Version") == "" {
+		req.Header["Sec-WebSocket-Version"] = []string{"13"}
+	}
+
 	err = req.Write(conn)
 	if err != nil {
 		return nil, err
 	}
 
 	connRF := &ConnRF{
-		Conn:  conn,
-		Req:   req,
-		First: true,
+		Conn:   conn,
+		Req:    req,
+		First:  true,
+		Accept: secWebSocketAccept(secKey),
 	}
 
 	if transportConfiguration.Ed == 0 {
