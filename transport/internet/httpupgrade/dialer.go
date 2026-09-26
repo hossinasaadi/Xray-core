@@ -105,6 +105,9 @@ func dialhttpUpgrade(ctx context.Context, dest net.Destination, streamSettings *
 		rand.Read(buf[:])
 		req.Header.Set("Sec-WebSocket-Key", base64.StdEncoding.EncodeToString(buf[:]))
 	}
+	if len(req.Header.Values("Sec-WebSocket-Version")) == 0 {
+		req.Header.Set("Sec-WebSocket-Version", "13")
+	}
 
 	err = req.Write(conn)
 	if err != nil {
